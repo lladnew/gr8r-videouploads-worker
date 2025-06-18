@@ -55,7 +55,7 @@ export default {
             table: "Video posts",
             title,
             fields: {
-              "Video URL": publicUrl,
+              "R2 URL": publicUrl,
               "Schedule Date-Time": scheduleDateTime,
               "Video Type": videoType,
               "Video Filename": `${title}.${fileExt}`,
