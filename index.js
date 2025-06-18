@@ -1,10 +1,11 @@
-// v1.0.1 gr8r-videouploads-worker: handles video uploads
+// v1.0.2 gr8r-videouploads-worker: handles video uploads
 //
 // Changelog:
 // - CREATED dedicated Worker for video uploads (v1.0.0)
 // - REMOVED 'uploads/' prefix from R2 key unless explicitly set via query param (v1.0.0)
 // - LOGS all major steps to Grafana (v1.0.0)
 // - ADDED JSON response payload with upload metadata (v1.0.1)
+// - ADDED fallback 403 response for all other requests (v1.0.2)
 
 export default {
   async fetch(request, env, ctx) {
@@ -100,7 +101,8 @@ export default {
       }
     }
 
-    return new Response("Not Found", { status: 404 });
+    // Fallback for all other methods and paths
+    return new Response("Forbidden", { status: 403 });
   }
 };
 
