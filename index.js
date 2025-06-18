@@ -4,7 +4,8 @@
 // - CREATED dedicated Worker for video uploads
 // - REMOVED 'uploads/' prefix from R2 key unless explicitly set via query param
 // - UPLOADS video to R2, updates Airtable, triggers Rev.ai job
-// - LOGS all major steps to Grafana with verbose error handling
+// - LOGS all major steps to Grafana using worker bindings
+// - REMOVED all hardcoded URLs in favor of service bindings
 
 export default {
   async fetch(request, env, ctx) {
@@ -29,7 +30,7 @@ export default {
         }
 
         const fileExt = (file.name || 'upload.mov').split('.').pop();
-        const prefix = searchParams.get("prefix") || ""; // Optional override
+        const prefix = searchParams.get("prefix") || "";
         const objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
 
         // Upload to R2
@@ -45,7 +46,7 @@ export default {
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
 
         // Update Airtable
-        const airtableRes = await fetch(env.AIRTABLE_UPDATE_URL, {
+        await env.AIRTABLE.fetch("/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -66,7 +67,7 @@ export default {
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
         // Trigger Rev.ai transcription
-        const revaiRes = await fetch(env.REVAI_JOB_URL, {
+        await env.REVAI.fetch("/api/revai", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -78,6 +79,7 @@ export default {
         await logToGrafana(env, "info", "Rev.ai job triggered", { title });
 
         return new Response("Video upload complete", { status: 200 });
+
       } catch (err) {
         await logToGrafana(env, "error", "Video upload error", { error: err.message });
         return new Response("Error uploading video", { status: 500 });
@@ -90,7 +92,7 @@ export default {
 
 async function logToGrafana(env, level, message, meta = {}) {
   try {
-    await fetch(env.GRAFANA_LOG_URL, {
+    await env.GRAFANA.fetch("/api/grafana", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
