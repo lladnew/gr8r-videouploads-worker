@@ -1,15 +1,12 @@
-// v1.0.6 gr8r-videouploads-worker: handles video uploads
-//
-// Changelog:
-// - CREATED dedicated Worker for video uploads (v1.0.0)
-// - REMOVED 'uploads/' prefix from R2 key unless explicitly set via query param (v1.0.0)
-// - LOGS all major steps to Grafana (v1.0.0)
-// - ADDED JSON response payload with upload metadata (v1.0.1)
-// - ADDED fallback 403 response for all other requests (v1.0.2)
-// - FIXED incorrect relative paths for Worker-to-Worker fetches (v1.0.3)
-// - ATTEMPTED refactor using absolute Request objects (v1.0.4)
-// - REVERTED to root path usage (v1.0.5, broken again)
-// - ✅ RESTORED functional pattern from assets-worker using dummy absolute URLs (v1.0.6)
+// gr8r-videouploads-worker Changelog:
+// v1.0.7 – Removed dummy URLs, restored real service bindings (Airtable, Rev.ai, Grafana); added downstream confirmation logs (pending test)
+// v1.0.6 – Restored functional pattern from assets-worker using dummy absolute URLs
+// v1.0.5 – Reverted to root path usage (broken again)
+// v1.0.4 – Attempted refactor using absolute Request objects
+// v1.0.3 – Fixed incorrect relative paths for Worker-to-Worker fetches
+// v1.0.2 – Added fallback 403 response for all other requests
+// v1.0.1 – Added JSON response payload with upload metadata
+// v1.0.0 – Created dedicated Worker; removed 'uploads/' prefix from R2 key; logged major steps to Grafana
 
 export default {
   async fetch(request, env, ctx) {
@@ -51,7 +48,7 @@ export default {
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
 
         // Update Airtable
-        await env.AIRTABLE.fetch(new Request("https://dummy.airtable/", {
+        await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -72,7 +69,7 @@ export default {
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
         // Trigger Rev.ai transcription
-        await env.REVAI.fetch(new Request("https://dummy.revai/", {
+        await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -112,7 +109,7 @@ export default {
 
 async function logToGrafana(env, level, message, meta = {}) {
   try {
-    await env.GRAFANA.fetch(new Request("https://dummy.grafana/", {
+    await env.GRAFANA.fetch(new Request("https://internal/api/grafana", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
