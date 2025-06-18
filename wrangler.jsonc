@@ -1,28 +1,19 @@
-{
-  "name": "gr8r-videouploads-worker",
-  "main": "index.js",
-  "compatibility_date": "2025-06-18",
+name = "gr8r-videouploads-worker"
+main = "index.js"
+compatibility_date = "2025-06-18"
 
-  "r2_buckets": [
-    {
-      "binding": "VIDEO_BUCKET",
-      "bucket_name": "videos-gr8r"
-    }
-  ],
+[[r2_buckets]]
+binding = "VIDEO_BUCKET"
+bucket_name = "videos-gr8r"
 
-  "services": [
-    {
-      "binding": "AIRTABLE",
-      "service": "gr8r-airtable-worker"
-    },
-    {
-      "binding": "REVAI",
-      "service": "gr8r-revai-worker"
-    },
-    {
-      "binding": "GRAFANA",
-      "service": "gr8r-grafana-worker"
-    }
-  ]
-}
+[[services]]
+binding = "AIRTABLE"
+service = "gr8r-airtable-worker"
 
+[[services]]
+binding = "REVAI"
+service = "gr8r-revai-worker"
+
+[[services]]
+binding = "GRAFANA"
+service = "gr8r-grafana-worker"
