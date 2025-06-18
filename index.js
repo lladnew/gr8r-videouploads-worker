@@ -1,4 +1,4 @@
-// v1.0.2 gr8r-videouploads-worker: handles video uploads
+// v1.0.3 gr8r-videouploads-worker: handles video uploads
 //
 // Changelog:
 // - CREATED dedicated Worker for video uploads (v1.0.0)
@@ -6,6 +6,7 @@
 // - LOGS all major steps to Grafana (v1.0.0)
 // - ADDED JSON response payload with upload metadata (v1.0.1)
 // - ADDED fallback 403 response for all other requests (v1.0.2)
+// - FIXED incorrect relative paths for Worker-to-Worker fetches (v1.0.3)
 
 export default {
   async fetch(request, env, ctx) {
@@ -47,7 +48,7 @@ export default {
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
 
         // Update Airtable
-        await env.AIRTABLE.fetch("/api/airtable/update", {
+        await env.AIRTABLE.fetch("/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -68,7 +69,7 @@ export default {
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
         // Trigger Rev.ai transcription
-        await env.REVAI.fetch("/api/revai", {
+        await env.REVAI.fetch("/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -108,7 +109,7 @@ export default {
 
 async function logToGrafana(env, level, message, meta = {}) {
   try {
-    await env.GRAFANA.fetch("/api/grafana", {
+    await env.GRAFANA.fetch("/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
