@@ -23,13 +23,6 @@
       "binding": "GRAFANA",
       "service": "gr8r-grafana-worker"
     }
-  ],
-
-  "routes": [
-    {
-      "pattern": "api.gr8r.com/videouploads",
-      "zone_name": "gr8r.com"
-    }
   ]
 }
 
