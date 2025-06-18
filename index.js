@@ -1,11 +1,10 @@
-// v1.0.0 gr8r-videouploads-worker: handles video uploads
+// v1.0.1 gr8r-videouploads-worker: handles video uploads
 //
 // Changelog:
-// - CREATED dedicated Worker for video uploads
-// - REMOVED 'uploads/' prefix from R2 key unless explicitly set via query param
-// - UPLOADS video to R2, updates Airtable, triggers Rev.ai job
-// - LOGS all major steps to Grafana using worker bindings
-// - REMOVED all hardcoded URLs in favor of service bindings
+// - CREATED dedicated Worker for video uploads (v1.0.0)
+// - REMOVED 'uploads/' prefix from R2 key unless explicitly set via query param (v1.0.0)
+// - LOGS all major steps to Grafana (v1.0.0)
+// - ADDED JSON response payload with upload metadata (v1.0.1)
 
 export default {
   async fetch(request, env, ctx) {
@@ -32,6 +31,7 @@ export default {
         const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
         const objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
+        const publicUrl = `https://${env.R2_PUBLIC_HOST}/${objectKey}`;
 
         // Upload to R2
         await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
@@ -53,7 +53,7 @@ export default {
             table: "Video posts",
             title,
             fields: {
-              "Video URL": `https://${env.R2_PUBLIC_HOST}/${objectKey}`,
+              "Video URL": publicUrl,
               "Schedule Date-Time": scheduleDateTime,
               "Video Type": videoType,
               "Video Filename": `${title}.${fileExt}`,
@@ -72,13 +72,27 @@ export default {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title,
-            url: `https://${env.R2_PUBLIC_HOST}/${objectKey}`
+            url: publicUrl
           })
         });
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title });
 
-        return new Response("Video upload complete", { status: 200 });
+        const responseBody = {
+          message: "Video upload complete",
+          objectKey,
+          publicUrl,
+          title,
+          scheduleDateTime,
+          videoType,
+          fileSizeMB: parseFloat((file.size / 1048576).toFixed(2)),
+          contentType: file.type
+        };
+
+        return new Response(JSON.stringify(responseBody), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
 
       } catch (err) {
         await logToGrafana(env, "error", "Video upload error", { error: err.message });
