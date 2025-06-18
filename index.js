@@ -1,4 +1,4 @@
-// v1.0.5 gr8r-videouploads-worker: handles video uploads
+// v1.0.6 gr8r-videouploads-worker: handles video uploads
 //
 // Changelog:
 // - CREATED dedicated Worker for video uploads (v1.0.0)
@@ -7,8 +7,9 @@
 // - ADDED JSON response payload with upload metadata (v1.0.1)
 // - ADDED fallback 403 response for all other requests (v1.0.2)
 // - FIXED incorrect relative paths for Worker-to-Worker fetches (v1.0.3)
-// - MIGRATED to absolute URL usage via Request objects (v1.0.4)
-// - REVERTED back to proven working pattern: env.BINDING.fetch("/", options) (v1.0.5)
+// - ATTEMPTED refactor using absolute Request objects (v1.0.4)
+// - REVERTED to root path usage (v1.0.5, broken again)
+// - ✅ RESTORED functional pattern from assets-worker using dummy absolute URLs (v1.0.6)
 
 export default {
   async fetch(request, env, ctx) {
@@ -50,7 +51,7 @@ export default {
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
 
         // Update Airtable
-        await env.AIRTABLE.fetch("/", {
+        await env.AIRTABLE.fetch(new Request("https://dummy.airtable/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -66,19 +67,19 @@ export default {
               "Video File Size Number": file.size
             }
           })
-        });
+        }));
 
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
         // Trigger Rev.ai transcription
-        await env.REVAI.fetch("/", {
+        await env.REVAI.fetch(new Request("https://dummy.revai/", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title,
             url: publicUrl
           })
-        });
+        }));
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title });
 
@@ -111,7 +112,7 @@ export default {
 
 async function logToGrafana(env, level, message, meta = {}) {
   try {
-    await env.GRAFANA.fetch("/", {
+    await env.GRAFANA.fetch(new Request("https://dummy.grafana/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -123,7 +124,7 @@ async function logToGrafana(env, level, message, meta = {}) {
           ...meta
         }
       })
-    });
+    }));
   } catch (err) {
     console.error("Grafana logging failed", err);
   }
