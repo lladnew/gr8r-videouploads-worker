@@ -1,20 +1,10 @@
-// v1.0.8 gr8r-videouploads-worker: improves reliability + logging for video uploads
-//
-// Changelog:
-// - REPLACED env.R2_PUBLIC_HOST with hardcoded videos.gr8r.com for public URL (v1.0.8)
-// - WRAPPED Rev.ai fetch in try/catch to prevent silent failures (v1.0.8)
-// - WRAPPED Airtable fetch in try/catch to ensure error visibility (v1.0.8)
-// - LOGS success/failure outcomes from downstream fetches to Grafana (v1.0.8)
-// - PRESERVED previous improvements from v1.0.7 (see below)
-// - REMOVED dummy URLs and RESTORED real service bindings for Airtable, Rev.ai, and Grafana (v1.0.7)
-// - ADDED full confirmation logs from downstream workers (v1.0.7)
-// - ✅ RESTORED functional pattern from assets-worker using dummy absolute URLs (v1.0.6)
-// - REVERTED to root path usage (v1.0.5, broken again)
-// - ATTEMPTED refactor using absolute Request objects (v1.0.4)
-// - FIXED incorrect relative paths for Worker-to-Worker fetches (v1.0.3)
-// - ADDED fallback 403 response for all other requests (v1.0.2)
-// - ADDED JSON response payload with upload metadata (v1.0.1)
-// - CREATED dedicated Worker for video uploads, removed 'uploads/' prefix unless explicitly set (v1.0.0)
+// v1.0.9 gr8r-videouploads-worker
+// FIXED: Restored proper Rev.ai payload format (v1.0.9)
+//   - Sends `media_url`, `metadata`, and `callback_url` (v1.0.9)
+// ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback (v1.0.9)
+// RETAINED: title, scheduleDateTime, and videoType in metadata (v1.0.9)
+// PRESERVED: Grafana logging for all steps (v1.0.9)
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -75,13 +65,18 @@ export default {
 
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
-        // Trigger Rev.ai transcription
+        // Trigger Rev.ai transcription job with proper payload
         await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title,
-            url: publicUrl
+            media_url: publicUrl,
+            metadata: {
+              title,
+              videoType,
+              scheduleDateTime
+            },
+            callback_url: "https://callback.gr8r.com/api/revai/callback"
           })
         }));
 
