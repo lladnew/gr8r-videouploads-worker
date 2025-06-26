@@ -1,4 +1,7 @@
-// v1.0.9 gr8r-videouploads-worker
+// v1.1.0 gr8r-videouploads-worker
+// ADDED: Made scheduleDateTime optional with empty string default (v1.1.0)
+// ADDED: Captured and returned airtable-worker response in JSON output (v1.1.0)
+// RETAINED: Existing R2, Rev.ai, Airtable, and Grafana functionality (v1.1.0)
 // FIXED: Restored proper Rev.ai payload format (v1.0.9)
 //   - Sends `media_url`, `metadata`, and `callback_url` (v1.0.9)
 // ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback (v1.0.9)
@@ -20,10 +23,10 @@ export default {
         const formData = await request.formData();
         const file = formData.get("video");
         const title = formData.get("title");
-        const scheduleDateTime = formData.get("scheduleDateTime");
+        const scheduleDateTime = formData.get("scheduleDateTime") || "";
         const videoType = formData.get("videoType");
 
-        if (!(file && title && scheduleDateTime && videoType)) {
+        if (!(file && title && videoType)) {
           return new Response("Missing required fields", { status: 400 });
         }
 
@@ -35,17 +38,13 @@ export default {
         // Upload to R2
         await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
           httpMetadata: { contentType: file.type },
-          customMetadata: {
-            title,
-            scheduleDateTime,
-            videoType
-          }
+          customMetadata: { title, scheduleDateTime, videoType }
         });
 
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
 
-        // Update Airtable
-        await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
+        // Update Airtable and capture response
+        const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -62,20 +61,17 @@ export default {
             }
           })
         }));
+        const airtableData = await airtableResponse.json();
 
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
-        // Trigger Rev.ai transcription job with proper payload
+        // Trigger Rev.ai transcription job
         await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             media_url: publicUrl,
-            metadata: {
-              title,
-              videoType,
-              scheduleDateTime
-            },
+            metadata: { title, videoType, scheduleDateTime },
             callback_url: "https://callback.gr8r.com/api/revai/callback"
           })
         }));
@@ -90,7 +86,8 @@ export default {
           scheduleDateTime,
           videoType,
           fileSizeMB: parseFloat((file.size / 1048576).toFixed(2)),
-          contentType: file.type
+          contentType: file.type,
+          airtableData // Include Airtable response
         };
 
         return new Response(JSON.stringify(responseBody), {
