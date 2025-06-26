@@ -1,4 +1,6 @@
-// v1.1.0 gr8r-videouploads-worker
+// v1.1.1 gr8r-videouploads-worker
+// ADDED: R2 video replacement logic using title-based prefix check (v1.1.1)
+// RETAINED: Optional scheduleDateTime, airtableData response, existing functionality (v1.1.1)
 // ADDED: Made scheduleDateTime optional with empty string default (v1.1.0)
 // ADDED: Captured and returned airtable-worker response in JSON output (v1.1.0)
 // RETAINED: Existing R2, Rev.ai, Airtable, and Grafana functionality (v1.1.0)
@@ -7,7 +9,6 @@
 // ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback (v1.0.9)
 // RETAINED: title, scheduleDateTime, and videoType in metadata (v1.0.9)
 // PRESERVED: Grafana logging for all steps (v1.0.9)
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -32,7 +33,16 @@ export default {
 
         const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
-        const objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
+        let objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
+
+        // Check for existing video in R2
+        const titlePrefix = `${prefix}${title.replace(/\s+/g, "_")}.`;
+        const listResponse = await env.VIDEO_BUCKET.list({ prefix: titlePrefix });
+        if (listResponse.objects.length > 0) {
+          objectKey = listResponse.objects[0].key; // Use existing key to overwrite
+          await logToGrafana(env, "info", "Found existing video, overwriting", { objectKey, title });
+        }
+
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
         // Upload to R2
@@ -87,7 +97,7 @@ export default {
           videoType,
           fileSizeMB: parseFloat((file.size / 1048576).toFixed(2)),
           contentType: file.type,
-          airtableData // Include Airtable response
+          airtableData
         };
 
         return new Response(JSON.stringify(responseBody), {
