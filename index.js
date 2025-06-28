@@ -1,4 +1,5 @@
-// v1.1.1 gr8r-videouploads-worker
+// v1.1.2 gr8r-videouploads-worker
+// ADDED: Rev.ai check for success (v1.1.2)
 // ADDED: R2 video replacement logic using title-based prefix check (v1.1.1)
 // RETAINED: Optional scheduleDateTime, airtableData response, existing functionality (v1.1.1)
 // ADDED: Made scheduleDateTime optional with empty string default (v1.1.0)
@@ -9,6 +10,7 @@
 // ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback (v1.0.9)
 // RETAINED: title, scheduleDateTime, and videoType in metadata (v1.0.9)
 // PRESERVED: Grafana logging for all steps (v1.0.9)
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -75,18 +77,36 @@ export default {
 
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
-        // Trigger Rev.ai transcription job
-        await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            media_url: publicUrl,
-            metadata: { title, videoType, scheduleDateTime },
-            callback_url: "https://callback.gr8r.com/api/revai/callback"
-          })
-        }));
+    // Trigger Rev.ai transcription job and check for success
+      const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          media_url: publicUrl,
+          metadata: { title, videoType, scheduleDateTime },
+          callback_url: "https://callback.gr8r.com/api/revai/callback"
+        })
+      }));
 
-        await logToGrafana(env, "info", "Rev.ai job triggered", { title });
+const revaiText = await revaiResponse.text();
+
+if (!revaiResponse.ok) {
+  await logToGrafana(env, "error", "Rev.ai job failed", {
+    title,
+    revaiStatus: revaiResponse.status,
+    revaiResponse: revaiText
+  });
+  return new Response(JSON.stringify({
+    error: "Rev.ai job failed",
+    message: revaiText
+  }), {
+    status: 502,
+    headers: { "Content-Type": "application/json" }
+  });
+}
+
+await logToGrafana(env, "info", "Rev.ai job triggered", { title });
+
 
         const responseBody = {
           message: "Video upload complete",
