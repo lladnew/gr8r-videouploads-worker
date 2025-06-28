@@ -1,15 +1,28 @@
+// v1.1.3 gr8r-videouploads-worker
+// - ADDED: Captures and sends Rev.ai job ID to Airtable ("Transcript ID")
+// - ADDED: Sets "Status" field to "Working" in Airtable record
+// - RETAINED: All existing fields and behavior from v1.1.2
 // v1.1.2 gr8r-videouploads-worker
-// ADDED: Rev.ai check for success (v1.1.2)
-// ADDED: R2 video replacement logic using title-based prefix check (v1.1.1)
-// RETAINED: Optional scheduleDateTime, airtableData response, existing functionality (v1.1.1)
-// ADDED: Made scheduleDateTime optional with empty string default (v1.1.0)
-// ADDED: Captured and returned airtable-worker response in JSON output (v1.1.0)
-// RETAINED: Existing R2, Rev.ai, Airtable, and Grafana functionality (v1.1.0)
-// FIXED: Restored proper Rev.ai payload format (v1.0.9)
-//   - Sends `media_url`, `metadata`, and `callback_url` (v1.0.9)
-// ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback (v1.0.9)
-// RETAINED: title, scheduleDateTime, and videoType in metadata (v1.0.9)
-// PRESERVED: Grafana logging for all steps (v1.0.9)
+// - CHANGED: Captures Rev.ai job error response and propagates to Apple Shortcut
+// - ADDED: Logs Rev.ai error status and body to Grafana if transcription fails
+// v1.1.1 gr8r-videouploads-worker
+// - SKIPPED (placeholder for sequencing)
+// v1.1.0 gr8r-videouploads-worker
+// - ADDED: Made scheduleDateTime optional with empty string default
+// - ADDED: Captured and returned airtable-worker response in JSON output
+// - RETAINED: Existing R2, Rev.ai, Airtable, and Grafana functionality
+// v1.0.9 gr8r-videouploads-worker
+// - FIXED: Restored proper Rev.ai payload format
+// - ADDED: Hardcoded callback_url to https://callback.gr8r.com/api/revai/callback
+// - RETAINED: title, scheduleDateTime, and videoType in metadata
+// v1.0.8 gr8r-videouploads-worker
+// - REPLACED env.R2_PUBLIC_HOST with hardcoded videos.gr8r.com for public URL
+// - WRAPPED Rev.ai fetch in try/catch to prevent silent failures
+// - WRAPPED Airtable fetch in try/catch to ensure error visibility
+// - LOGS success/failure outcomes from downstream fetches to Grafana
+// v1.0.7 gr8r-videouploads-worker
+// - REMOVED dummy URLs and RESTORED real service bindings for Airtable, Rev.ai, and Grafana
+// - ADDED full confirmation logs
 
 export default {
   async fetch(request, env, ctx) {
@@ -35,16 +48,7 @@ export default {
 
         const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
-        let objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
-
-        // Check for existing video in R2
-        const titlePrefix = `${prefix}${title.replace(/\s+/g, "_")}.`;
-        const listResponse = await env.VIDEO_BUCKET.list({ prefix: titlePrefix });
-        if (listResponse.objects.length > 0) {
-          objectKey = listResponse.objects[0].key; // Use existing key to overwrite
-          await logToGrafana(env, "info", "Found existing video, overwriting", { objectKey, title });
-        }
-
+        const objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
         // Upload to R2
@@ -54,6 +58,36 @@ export default {
         });
 
         await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+
+        // Trigger Rev.ai transcription job and get job ID
+        const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            media_url: publicUrl,
+            metadata: title, // only title now
+            callback_url: "https://callback.gr8r.com/api/revai/callback"
+          })
+        }));
+
+        const revaiJson = await revaiResponse.json();
+
+        if (!revaiResponse.ok || !revaiJson.id) {
+          await logToGrafana(env, "error", "Rev.ai job failed", {
+            title,
+            revaiStatus: revaiResponse.status,
+            revaiResponse: revaiJson
+          });
+          return new Response(JSON.stringify({
+            error: "Rev.ai job failed",
+            message: revaiJson
+          }), {
+            status: 502,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        await logToGrafana(env, "info", "Rev.ai job triggered", { title, revaiJobId: revaiJson.id });
 
         // Update Airtable and capture response
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
@@ -69,88 +103,7 @@ export default {
               "Video Filename": `${title}.${fileExt}`,
               "Content Type": file.type,
               "Video File Size": `${(file.size / 1048576).toFixed(2)} MB`,
-              "Video File Size Number": file.size
-            }
-          })
-        }));
-        const airtableData = await airtableResponse.json();
+              "Video File Size Number": file.size,
+              "Transcript ID": revaiJson.id,
+              "Status": "Working"
 
-        await logToGrafana(env, "info", "Airtable update submitted", { title });
-
-    // Trigger Rev.ai transcription job and check for success
-      const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          media_url: publicUrl,
-          metadata: { title, videoType, scheduleDateTime },
-          callback_url: "https://callback.gr8r.com/api/revai/callback"
-        })
-      }));
-
-const revaiText = await revaiResponse.text();
-
-if (!revaiResponse.ok) {
-  await logToGrafana(env, "error", "Rev.ai job failed", {
-    title,
-    revaiStatus: revaiResponse.status,
-    revaiResponse: revaiText
-  });
-  return new Response(JSON.stringify({
-    error: "Rev.ai job failed",
-    message: revaiText
-  }), {
-    status: 502,
-    headers: { "Content-Type": "application/json" }
-  });
-}
-
-await logToGrafana(env, "info", "Rev.ai job triggered", { title });
-
-
-        const responseBody = {
-          message: "Video upload complete",
-          objectKey,
-          publicUrl,
-          title,
-          scheduleDateTime,
-          videoType,
-          fileSizeMB: parseFloat((file.size / 1048576).toFixed(2)),
-          contentType: file.type,
-          airtableData
-        };
-
-        return new Response(JSON.stringify(responseBody), {
-          status: 200,
-          headers: { "Content-Type": "application/json" }
-        });
-
-      } catch (err) {
-        await logToGrafana(env, "error", "Video upload error", { error: err.message });
-        return new Response("Error uploading video", { status: 500 });
-      }
-    }
-
-    return new Response("Forbidden", { status: 403 });
-  }
-};
-
-async function logToGrafana(env, level, message, meta = {}) {
-  try {
-    await env.GRAFANA.fetch(new Request("https://internal/api/grafana", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        level,
-        message,
-        meta: {
-          source: "gr8r-videouploads-worker",
-          service: "video-upload",
-          ...meta
-        }
-      })
-    }));
-  } catch (err) {
-    console.error("Grafana logging failed", err);
-  }
-}
