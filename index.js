@@ -1,7 +1,9 @@
 // v1.1.3 gr8r-videouploads-worker
 // - ADDED: Captures and sends Rev.ai job ID to Airtable ("Transcript ID")
 // - ADDED: Sets "Status" field to "Working" in Airtable record
-// - RETAINED: All existing fields and behavior from v1.1.2
+// - CHANGED: Uses SHA-1 hash of file content to generate stable R2 object key
+// - ADDED: Skips R2 upload if file with same hash already exists
+// - RETAINED: All existing Airtable fields and functionality
 // v1.1.2 gr8r-videouploads-worker
 // - CHANGED: Captures Rev.ai job error response and propagates to Apple Shortcut
 // - ADDED: Logs Rev.ai error status and body to Grafana if transcription fails
@@ -48,16 +50,25 @@ export default {
 
         const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
-        const objectKey = `${prefix}${Date.now()}-${title.replace(/\s+/g, "_")}.${fileExt}`;
+
+        // Generate SHA-1 hash of the file contents
+        const fileBuffer = await file.arrayBuffer();
+        const hashArray = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1", fileBuffer)));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+        const objectKey = `${prefix}${hashHex}.${fileExt}`;
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
-        // Upload to R2
-        await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
-          httpMetadata: { contentType: file.type },
-          customMetadata: { title, scheduleDateTime, videoType }
-        });
-
-        await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+        // Check for existing object before upload
+        const existing = await env.VIDEO_BUCKET.get(objectKey);
+        if (!existing) {
+          await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
+            httpMetadata: { contentType: file.type },
+            customMetadata: { title, scheduleDateTime, videoType }
+          });
+          await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+        } else {
+          await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
+        }
 
         // Trigger Rev.ai transcription job and get job ID
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
@@ -65,7 +76,7 @@ export default {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             media_url: publicUrl,
-            metadata: title, // only title now
+            metadata: title,
             callback_url: "https://callback.gr8r.com/api/revai/callback"
           })
         }));
@@ -106,4 +117,58 @@ export default {
               "Video File Size Number": file.size,
               "Transcript ID": revaiJson.id,
               "Status": "Working"
+            }
+          })
+        }));
+        const airtableData = await airtableResponse.json();
+
+        await logToGrafana(env, "info", "Airtable update submitted", { title });
+
+        const responseBody = {
+          message: "Video upload complete",
+          objectKey,
+          publicUrl,
+          title,
+          scheduleDateTime,
+          videoType,
+          fileSizeMB: parseFloat((file.size / 1048576).toFixed(2)),
+          contentType: file.type,
+          transcriptId: revaiJson.id,
+          airtableData
+        };
+
+        return new Response(JSON.stringify(responseBody), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+
+      } catch (err) {
+        await logToGrafana(env, "error", "Video upload error", { error: err.message });
+        return new Response("Error uploading video", { status: 500 });
+      }
+    }
+
+    return new Response("Forbidden", { status: 403 });
+  }
+};
+
+async function logToGrafana(env, level, message, meta = {}) {
+  try {
+    await env.GRAFANA.fetch(new Request("https://internal/api/grafana", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        level,
+        message,
+        meta: {
+          source: "gr8r-videouploads-worker",
+          service: "video-upload",
+          ...meta
+        }
+      })
+    }));
+  } catch (err) {
+    console.error("Grafana logging failed", err);
+  }
+}
 
