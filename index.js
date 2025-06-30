@@ -1,3 +1,7 @@
+// v1.1.4 gr8r-videouploads-worker
+// - IMPROVED: Outer catch block now logs full error object (message, name, stack) to Grafana
+// - ADDED: JSON error response body includes message, name, and stack for Apple Shortcut inspection
+// - RETAINED: All prior features and logging behavior from v1.1.3
 // v1.1.3 gr8r-videouploads-worker
 // - ADDED: Captures and sends Rev.ai job ID to Airtable ("Transcript ID")
 // - ADDED: Sets "Status" field to "Working" in Airtable record
@@ -8,7 +12,6 @@
 // - CHANGED: Captures Rev.ai job error response and propagates to Apple Shortcut
 // - ADDED: Logs Rev.ai error status and body to Grafana if transcription fails
 // v1.1.1 gr8r-videouploads-worker
-// - SKIPPED (placeholder for sequencing)
 // v1.1.0 gr8r-videouploads-worker
 // - ADDED: Made scheduleDateTime optional with empty string default
 // - ADDED: Captured and returned airtable-worker response in JSON output
@@ -143,8 +146,21 @@ export default {
         });
 
       } catch (err) {
-        await logToGrafana(env, "error", "Video upload error", { error: err.message });
-        return new Response("Error uploading video", { status: 500 });
+        await logToGrafana(env, "error", "Video upload error", {
+          error: err.message,
+          name: err.name,
+          stack: err.stack
+        });
+
+        return new Response(JSON.stringify({
+          error: "Unhandled upload failure",
+          message: err.message,
+          name: err.name,
+          stack: err.stack
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
       }
     }
 
@@ -171,4 +187,3 @@ async function logToGrafana(env, level, message, meta = {}) {
     console.error("Grafana logging failed", err);
   }
 }
-
