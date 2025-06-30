@@ -1,3 +1,7 @@
+// v1.1.5 gr8r-videouploads-worker
+// - FIXED: Airtable response parsing now handles non-JSON (text) error bodies gracefully
+// - ADDED: Logs and throws clear error if Airtable returns non-2xx response
+// - RETAINED: All functionality from v1.1.4 and prior
 // v1.1.4 gr8r-videouploads-worker
 // - IMPROVED: Outer catch block now logs full error object (message, name, stack) to Grafana
 // - ADDED: JSON error response body includes message, name, and stack for Apple Shortcut inspection
@@ -123,7 +127,15 @@ export default {
             }
           })
         }));
-        const airtableData = await airtableResponse.json();
+
+        let airtableData = null;
+        if (airtableResponse.ok) {
+          airtableData = await airtableResponse.json();
+        } else {
+          const text = await airtableResponse.text();
+          await logToGrafana(env, "error", "Airtable create failed", { title, airtableResponseText: text });
+          throw new Error(`Airtable create failed: ${text}`);
+        }
 
         await logToGrafana(env, "info", "Airtable update submitted", { title });
 
