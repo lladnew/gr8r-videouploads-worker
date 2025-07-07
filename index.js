@@ -1,3 +1,8 @@
+// v1.1.6 gr8r-videouploads-worker
+// UPDATE to use airtable table ID rather than table name
+// Reordered Airtable update to start before Rev.ai
+// ADDED: Second Airtable update after Rev.ai job start to log Transcript ID and set status
+// ADDED: Grafana log "Transcript ID logged" after second Airtable update
 // v1.1.5 gr8r-videouploads-worker
 // - FIXED: Airtable response parsing now handles non-JSON (text) error bodies gracefully
 // - ADDED: Logs and throws clear error if Airtable returns non-2xx response
@@ -77,6 +82,37 @@ export default {
           await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
         }
 
+             // Update Airtable and capture response
+        const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: "tblQKTuBRVrpJLmJp",
+            title,
+            fields: {
+              "R2 URL": publicUrl,
+              "Schedule Date-Time": scheduleDateTime,
+              "Video Type": videoType,
+              "Video Filename": `${title}.${fileExt}`,
+              "Content Type": file.type,
+              "Video File Size": `${(file.size / 1048576).toFixed(2)} MB`,
+              "Video File Size Number": file.size,
+              "Status": "Working"
+            }
+          })
+        }));
+
+        let airtableData = null;
+        if (airtableResponse.ok) {
+          airtableData = await airtableResponse.json();
+        } else {
+          const text = await airtableResponse.text();
+          await logToGrafana(env, "error", "Airtable create New Video failed", { title, airtableResponseText: text });
+          throw new Error(`Airtable create failed: ${text}`);
+        }
+
+        await logToGrafana(env, "info", "Airtable New Video Entry", { title });
+        
         // Trigger Rev.ai transcription job and get job ID
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
@@ -106,38 +142,23 @@ export default {
         }
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title, revaiJobId: revaiJson.id });
-
-        // Update Airtable and capture response
-        const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            table: "Video posts",
-            title,
-            fields: {
-              "R2 URL": publicUrl,
-              "Schedule Date-Time": scheduleDateTime,
-              "Video Type": videoType,
-              "Video Filename": `${title}.${fileExt}`,
-              "Content Type": file.type,
-              "Video File Size": `${(file.size / 1048576).toFixed(2)} MB`,
-              "Video File Size Number": file.size,
-              "Transcript ID": revaiJson.id,
-              "Status": "Working"
-            }
-          })
-        }));
-
-        let airtableData = null;
-        if (airtableResponse.ok) {
-          airtableData = await airtableResponse.json();
-        } else {
-          const text = await airtableResponse.text();
-          await logToGrafana(env, "error", "Airtable create failed", { title, airtableResponseText: text });
-          throw new Error(`Airtable create failed: ${text}`);
-        }
-
-        await logToGrafana(env, "info", "Airtable update submitted", { title });
+ 
+await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    table: "tblQKTuBRVrpJLmJp",
+    title,
+    fields: {
+      "Status": "Pending Transcription",
+      "Transcript ID": revaiJson.id
+    }
+  })
+}));
+await logToGrafana(env, "info", "Transcript ID logged", {
+  title,
+  revaiJobId: revaiJson.id
+});
 
         const responseBody = {
           message: "Video upload complete",
