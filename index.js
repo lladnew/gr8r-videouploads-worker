@@ -1,3 +1,5 @@
+// v1.1.8 gr8r-videouploads-worker
+// added support for hash as a provided field as well as logging of hash
 // v1.1.7 gr8r-videouploads-worker
 // CHANGED: Moved formData parsing above early skip to access actual file extension
 // CHANGED: Early R2 skip now uses file.name-derived extension instead of hardcoded ".mov"
@@ -76,7 +78,13 @@ export default {
         await logToGrafana(env, "warn", "Missing file.name in upload; defaulted extension to .bin", {});
         }
 
-        const providedHash = searchParams.get("sha1");
+        const providedHash = formData.get("hash") || searchParams.get("sha1");
+        await logToGrafana(env, "debug", "Hash input method", {
+        fromForm: !!formData.get("hash"),
+        fromQuery: !!searchParams.get("sha1"),
+        providedHash
+        });
+
         const prefix = searchParams.get("prefix") || "";
 
         let objectKey = "";
