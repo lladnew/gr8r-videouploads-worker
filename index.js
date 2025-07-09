@@ -1,3 +1,9 @@
+// v1.1.9 gr8r-videouploads-worker
+// - ADDED: Early check for existing Airtable record with same title + R2 URL
+// - CHANGED: Skips R2 upload if such a record exists, but still proceeds with:
+//            - Airtable field update (Schedule Date-Time, etc.)
+//            - Rev.ai transcription trigger
+//            - All downstream flows stay intact
 // v1.1.8 gr8r-videouploads-worker
 // added support for hash as a provided field as well as logging of hash
 // v1.1.7 gr8r-videouploads-worker
@@ -84,6 +90,30 @@ export default {
         fromQuery: !!searchParams.get("sha1"),
         providedHash
         });
+// PATCH v1.1.9: Skip file upload if title already has R2 URL, continue with rest of flow
+let skipUpload = false;
+
+const existingResp = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/get", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    table: "tblQKTuBRVrpJLmJp",
+    matchField: "Title",
+    matchValue: title
+  })
+}));
+
+if (existingResp.ok) {
+  const existingJson = await existingResp.json();
+  const r2url = existingJson?.fields?.["R2 URL"];
+  if (existingJson?.recordId && r2url && r2url.trim() !== "") {
+    skipUpload = true;
+    await logToGrafana(env, "info", "R2 upload skipped due to existing R2 URL", {
+      title,
+      existingR2URL: r2url
+    });
+  }
+}
 
         const prefix = searchParams.get("prefix") || "";
 
@@ -122,15 +152,20 @@ export default {
 
         // Check again in case early check didn’t fire (no hash)
         const existing = await env.VIDEO_BUCKET.get(objectKey);
-        if (!existing) {
-          await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
-            httpMetadata: { contentType: file.type },
-            customMetadata: { title, scheduleDateTime, videoType }
-          });
-          await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
-        } else {
-          await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
-        }
+       
+        if (!existing && !skipUpload) {
+  await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
+    httpMetadata: { contentType: file.type },
+    customMetadata: { title, scheduleDateTime, videoType }
+  });
+          
+  await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+} else if (skipUpload) {
+  await logToGrafana(env, "info", "R2 upload skipped: matched on title", { objectKey, title });
+} else {
+  await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
+}
+
 // Update Airtable and capture response
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
