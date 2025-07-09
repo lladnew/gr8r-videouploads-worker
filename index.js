@@ -1,3 +1,5 @@
+// v1.2.0 gr8r-videouploads-worker
+// skipped several versions from rollback now adding verbose console logging at top line 45 to 64
 // v1.1.6 gr8r-videouploads-worker
 // UPDATE to use airtable table ID rather than table name
 // Reordered Airtable update to start before Rev.ai
@@ -40,6 +42,26 @@
 
 export default {
   async fetch(request, env, ctx) {
+    console.log('[videouploads-worker] Handler triggered');
+
+    try {
+      const contentType = request.headers.get('content-type') || 'none';
+      console.log('[videouploads-worker] Content-Type:', contentType);
+
+      if (request.method !== 'POST') {
+        console.log('[videouploads-worker] Non-POST request received:', request.method);
+      }
+
+      const clone = request.clone(); // We clone so body is still available later
+      const rawBody = await clone.text();
+      console.log('[videouploads-worker] Raw body length:', rawBody.length);
+      console.log('[videouploads-worker] Raw body (first 1000 chars):\n', rawBody.slice(0, 1000));
+    } catch (err) {
+      console.error('[videouploads-worker] Error while logging request:', err);
+    }
+
+    // ... rest of your existing logic here
+
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
 
