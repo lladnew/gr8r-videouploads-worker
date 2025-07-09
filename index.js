@@ -1,17 +1,3 @@
-// v1.1.9 gr8r-videouploads-worker
-// - ADDED: Early check for existing Airtable record with same title + R2 URL
-// - CHANGED: Skips R2 upload if such a record exists, but still proceeds with:
-//            - Airtable field update (Schedule Date-Time, etc.)
-//            - Rev.ai transcription trigger
-//            - All downstream flows stay intact
-// v1.1.8 gr8r-videouploads-worker
-// added support for hash as a provided field as well as logging of hash
-// v1.1.7 gr8r-videouploads-worker
-// CHANGED: Moved formData parsing above early skip to access actual file extension
-// CHANGED: Early R2 skip now uses file.name-derived extension instead of hardcoded ".mov"
-// RETAINED: All logic paths and variable names
-// RETAINED: Only one declaration of `prefix`
-// RETAINED: Original file hash and objectKey logic structure
 // v1.1.6 gr8r-videouploads-worker
 // UPDATE to use airtable table ID rather than table name
 // Reordered Airtable update to start before Rev.ai
@@ -51,6 +37,7 @@
 // v1.0.7 gr8r-videouploads-worker
 // - REMOVED dummy URLs and RESTORED real service bindings for Airtable, Rev.ai, and Grafana
 // - ADDED full confirmation logs
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -63,110 +50,39 @@ export default {
           return new Response("Expected multipart/form-data", { status: 400 });
         }
 
-        // REQUIRED EARLY: to derive correct file extension before objectKey construction
         const formData = await request.formData();
         const file = formData.get("video");
-
-        if (!file) {
-          return new Response("Missing file", { status: 400 });
-        }
-
         const title = formData.get("title");
         const scheduleDateTime = formData.get("scheduleDateTime") || "";
         const videoType = formData.get("videoType");
 
-        if (!(title && videoType)) {
+        if (!(file && title && videoType)) {
           return new Response("Missing required fields", { status: 400 });
         }
 
-        const fileExt = file.name?.split('.').pop() || 'bin';
-        if (!file.name) {
-        await logToGrafana(env, "warn", "Missing file.name in upload; defaulted extension to .bin", {});
-        }
-
-        const providedHash = formData.get("hash") || searchParams.get("sha1");
-        await logToGrafana(env, "debug", "Hash input method", {
-        fromForm: !!formData.get("hash"),
-        fromQuery: !!searchParams.get("sha1"),
-        providedHash
-        });
-// PATCH v1.1.9: Skip file upload if title already has R2 URL, continue with rest of flow
-let skipUpload = false;
-
-const existingResp = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/get", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    table: "tblQKTuBRVrpJLmJp",
-    matchField: "Title",
-    matchValue: title
-  })
-}));
-
-if (existingResp.ok) {
-  const existingJson = await existingResp.json();
-  const r2url = existingJson?.fields?.["R2 URL"];
-  if (existingJson?.recordId && r2url && r2url.trim() !== "") {
-    skipUpload = true;
-    await logToGrafana(env, "info", "R2 upload skipped due to existing R2 URL", {
-      title,
-      existingR2URL: r2url
-    });
-  }
-}
-
+        const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
 
-        let objectKey = "";
-        if (providedHash) {
-          objectKey = `${prefix}${providedHash}.${fileExt}`;
-          const existing = await env.VIDEO_BUCKET.head(objectKey);
-          if (existing) {
-            const publicUrl = `https://videos.gr8r.com/${objectKey}`;
-            await logToGrafana(env, "info", "Skipped R2 upload (pre-check hit)", { objectKey });
-            return new Response(JSON.stringify({
-              message: "Video already exists, no upload needed.",
-              objectKey,
-              publicUrl,
-              skipped: true
-            }), {
-              status: 200,
-              headers: { "Content-Type": "application/json" }
-            });
-          }
-        }
-
-        // HASHING if not already skipped
-        let hashHex = "";
-        if (providedHash) {
-          hashHex = providedHash;
-          objectKey = `${prefix}${hashHex}.${fileExt}`;
-        } else {
-          const fileBuffer = await file.arrayBuffer();
-          const hashArray = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1", fileBuffer)));
-          hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-          objectKey = `${prefix}${hashHex}.${fileExt}`;
-        }
-
+        // Generate SHA-1 hash of the file contents
+        const fileBuffer = await file.arrayBuffer();
+        const hashArray = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1", fileBuffer)));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+        const objectKey = `${prefix}${hashHex}.${fileExt}`;
         const publicUrl = `https://videos.gr8r.com/${objectKey}`;
 
-        // Check again in case early check didn’t fire (no hash)
+        // Check for existing object before upload
         const existing = await env.VIDEO_BUCKET.get(objectKey);
-       
-        if (!existing && !skipUpload) {
-  await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
-    httpMetadata: { contentType: file.type },
-    customMetadata: { title, scheduleDateTime, videoType }
-  });
-          
-  await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
-} else if (skipUpload) {
-  await logToGrafana(env, "info", "R2 upload skipped: matched on title", { objectKey, title });
-} else {
-  await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
-}
+        if (!existing) {
+          await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
+            httpMetadata: { contentType: file.type },
+            customMetadata: { title, scheduleDateTime, videoType }
+          });
+          await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+        } else {
+          await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
+        }
 
-// Update Airtable and capture response
+             // Update Airtable and capture response
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -196,7 +112,8 @@ if (existingResp.ok) {
         }
 
         await logToGrafana(env, "info", "Airtable New Video Entry", { title });
-// Trigger Rev.ai transcription job and get job ID 
+        
+        // Trigger Rev.ai transcription job and get job ID
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -225,23 +142,23 @@ if (existingResp.ok) {
         }
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title, revaiJobId: revaiJson.id });
-
-        await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            table: "tblQKTuBRVrpJLmJp",
-            title,
-            fields: {
-              "Status": "Pending Transcription",
-              "Transcript ID": revaiJson.id
-            }
-          })
-        }));
-        await logToGrafana(env, "info", "Transcript ID logged", {
-          title,
-          revaiJobId: revaiJson.id
-        });
+ 
+await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    table: "tblQKTuBRVrpJLmJp",
+    title,
+    fields: {
+      "Status": "Pending Transcription",
+      "Transcript ID": revaiJson.id
+    }
+  })
+}));
+await logToGrafana(env, "info", "Transcript ID logged", {
+  title,
+  revaiJobId: revaiJson.id
+});
 
         const responseBody = {
           message: "Video upload complete",
