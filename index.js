@@ -1,5 +1,5 @@
 // v1.2.1 gr8r-videouploads-worker
-// changing logging because clone made it hit max cloudflare size error 413
+// changing logging because clone made it hit max cloudflare size error 413 
 // v1.2.0 gr8r-videouploads-worker
 // skipped several versions from rollback now adding verbose console logging at top line 45 to 64
 // v1.1.6 gr8r-videouploads-worker
@@ -75,8 +75,9 @@ if (request.method !== 'POST') {
         console.log('  title:', title);
         console.log('  videoType:', videoType);
         console.log('  scheduleDateTime:', scheduleDateTime);
-        console.log('  video filename:', videoFile?.name);
-        console.log('  video size (approx):', videoFile?.size);
+        console.log('  video filename:', file?.name);
+        console.log('  video size (approx):', file?.size);
+
         
         if (!(file && title && videoType)) {
           return new Response("Missing required fields", { status: 400 });
