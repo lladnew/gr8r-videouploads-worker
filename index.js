@@ -1,3 +1,9 @@
+// v1.2.0 gr8r-videouploads-worker
+// CHANGED: Moved formData parsing above early skip to access actual file extension
+// ADDED: Early check for existing Airtable record with same title
+// CHANGED: Skips R2 upload and file hash if title already exists
+// ADDED: Reuses existing R2 URL from Airtable for Rev.ai when skipping upload
+// dropped version 1.1.7-9
 // v1.1.6 gr8r-videouploads-worker
 // UPDATE to use airtable table ID rather than table name
 // Reordered Airtable update to start before Rev.ai
@@ -37,7 +43,6 @@
 // v1.0.7 gr8r-videouploads-worker
 // - REMOVED dummy URLs and RESTORED real service bindings for Airtable, Rev.ai, and Grafana
 // - ADDED full confirmation logs
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -63,26 +68,42 @@ export default {
         const fileExt = (file.name || 'upload.mov').split('.').pop();
         const prefix = searchParams.get("prefix") || "";
 
-        // Generate SHA-1 hash of the file contents
-        const fileBuffer = await file.arrayBuffer();
-        const hashArray = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1", fileBuffer)));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-        const objectKey = `${prefix}${hashHex}.${fileExt}`;
-        const publicUrl = `https://videos.gr8r.com/${objectKey}`;
+        let skipR2 = false;
+        let publicUrl = "";
+        let objectKey = "";
 
-        // Check for existing object before upload
-        const existing = await env.VIDEO_BUCKET.get(objectKey);
-        if (!existing) {
-          await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
-            httpMetadata: { contentType: file.type },
-            customMetadata: { title, scheduleDateTime, videoType }
+        // Early check: does this title already exist in Airtable?
+        const existingRecord = await getRecordByTitle(title, env);
+
+        if (existingRecord) {
+          skipR2 = true;
+          publicUrl = existingRecord.fields["R2 URL"] || "";
+          await logToGrafana(env, "info", "Skipping R2 — Title exists, reusing existing R2 URL", {
+            title,
+            publicUrl
           });
-          await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
-        } else {
-          await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
         }
 
-             // Update Airtable and capture response
+        if (!skipR2) {
+          const fileBuffer = await file.arrayBuffer();
+          const hashArray = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1", fileBuffer)));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+          objectKey = `${prefix}${hashHex}.${fileExt}`;
+          publicUrl = `https://videos.gr8r.com/${objectKey}`;
+
+          const existing = await env.VIDEO_BUCKET.get(objectKey);
+          if (!existing) {
+            await env.VIDEO_BUCKET.put(objectKey, file.stream(), {
+              httpMetadata: { contentType: file.type },
+              customMetadata: { title, scheduleDateTime, videoType }
+            });
+            await logToGrafana(env, "info", "R2 upload successful", { objectKey, title });
+          } else {
+            await logToGrafana(env, "info", "Skipped R2 upload (already exists)", { objectKey, title });
+          }
+        }
+
+        // Update Airtable and capture response
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -112,7 +133,7 @@ export default {
         }
 
         await logToGrafana(env, "info", "Airtable New Video Entry", { title });
-        
+
         // Trigger Rev.ai transcription job and get job ID
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
@@ -142,23 +163,23 @@ export default {
         }
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title, revaiJobId: revaiJson.id });
- 
-await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    table: "tblQKTuBRVrpJLmJp",
-    title,
-    fields: {
-      "Status": "Pending Transcription",
-      "Transcript ID": revaiJson.id
-    }
-  })
-}));
-await logToGrafana(env, "info", "Transcript ID logged", {
-  title,
-  revaiJobId: revaiJson.id
-});
+
+        await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: "tblQKTuBRVrpJLmJp",
+            title,
+            fields: {
+              "Status": "Pending Transcription",
+              "Transcript ID": revaiJson.id
+            }
+          })
+        }));
+        await logToGrafana(env, "info", "Transcript ID logged", {
+          title,
+          revaiJobId: revaiJson.id
+        });
 
         const responseBody = {
           message: "Video upload complete",
@@ -219,4 +240,22 @@ async function logToGrafana(env, level, message, meta = {}) {
   } catch (err) {
     console.error("Grafana logging failed", err);
   }
+}
+
+async function getRecordByTitle(title, env) {
+  const url = `https://api.airtable.com/v0/${env.AIRTABLE_BASE_ID}/${env.AIRTABLE_TABLE_ID}?filterByFormula=${encodeURIComponent(`{Title}="${title}"`)}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${env.AIRTABLE_API_KEY}`
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    await logToGrafana(env, "error", "Airtable title fetch failed", { title, responseText: text });
+    throw new Error(`Airtable check failed: ${text}`);
+  }
+
+  const json = await res.json();
+  return json.records.length > 0 ? json.records[0] : null;
 }
