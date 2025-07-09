@@ -1,3 +1,5 @@
+// v1.2.1 gr8r-videouploads-worker
+// changing logging because clone made it hit max cloudflare size error 413
 // v1.2.0 gr8r-videouploads-worker
 // skipped several versions from rollback now adding verbose console logging at top line 45 to 64
 // v1.1.6 gr8r-videouploads-worker
@@ -44,23 +46,14 @@ export default {
   async fetch(request, env, ctx) {
     console.log('[videouploads-worker] Handler triggered');
 
-    try {
-      const contentType = request.headers.get('content-type') || 'none';
-      console.log('[videouploads-worker] Content-Type:', contentType);
+const contentType = request.headers.get('content-type') || 'none';
+console.log('[videouploads-worker] Content-Type:', contentType);
 
-      if (request.method !== 'POST') {
-        console.log('[videouploads-worker] Non-POST request received:', request.method);
-      }
+if (request.method !== 'POST') {
+  console.log('[videouploads-worker] Non-POST request received:', request.method);
+}
 
-      const clone = request.clone(); // We clone so body is still available later
-      const rawBody = await clone.text();
-      console.log('[videouploads-worker] Raw body length:', rawBody.length);
-      console.log('[videouploads-worker] Raw body (first 1000 chars):\n', rawBody.slice(0, 1000));
-    } catch (err) {
-      console.error('[videouploads-worker] Error while logging request:', err);
-    }
-
-    // ... rest of your existing logic here
+// streaming-safe: only parse once later with formData
 
     const url = new URL(request.url);
     const { pathname, searchParams } = url;
@@ -77,7 +70,14 @@ export default {
         const title = formData.get("title");
         const scheduleDateTime = formData.get("scheduleDateTime") || "";
         const videoType = formData.get("videoType");
-
+        
+        console.log('[videouploads-worker] Parsed fields:');
+        console.log('  title:', title);
+        console.log('  videoType:', videoType);
+        console.log('  scheduleDateTime:', scheduleDateTime);
+        console.log('  video filename:', videoFile?.name);
+        console.log('  video size (approx):', videoFile?.size);
+        
         if (!(file && title && videoType)) {
           return new Response("Missing required fields", { status: 400 });
         }
