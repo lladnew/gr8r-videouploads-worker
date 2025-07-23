@@ -48,7 +48,7 @@ export default {
         // ADDED: Attempt to read metadata from R2 object
         let contentType = object.httpMetadata?.contentType || "unknown";
         let contentLength = object.size || null;
-        let humanSize = contentLength ? `${(contentLength / 1048576).toFixed(2)} MB` : null;
+        // let humanSize = contentLength ? `${(contentLength / 1048576).toFixed(2)} MB` : null; //commenting out since field is depracated
 
         // CHANGED: First Airtable update with new fields
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
@@ -63,7 +63,7 @@ export default {
               "Video Type": videoType,
               "Video Filename": filename,
               "Content Type": contentType,
-              "Video File Size": humanSize,
+              // "Video File Size": humanSize,  //commenting out since field is depracated
               "Video File Size Number": contentLength,
               "Status": "Working"
             }
