@@ -1,8 +1,4 @@
-// v1.3.0 gr8r-videouploads-worker
-// CHANGED: Switched from multipart/form-data to application/json
-// REMOVED: File blob handling and R2 upload logic
-// ADDED: Uses filename to build public URL and validate existence
-// ADDED: Pulls metadata from R2 for Airtable logging
+// v1.3.1 gr8r-videouploads-worker added code to also update DB1 alongside Airtable
 
 export default {
   async fetch(request, env, ctx) {
@@ -79,7 +75,35 @@ export default {
           throw new Error(`Airtable create failed: ${text}`);
         }
 
-        await logToGrafana(env, "info", "Airtable New Video Entry", { title });
+        await logToGrafana(env, "info", "Airtable New Video Entry", { 
+          title, 
+          db1response: db1data
+        });
+// ADDED: DB1 update to mirror Airtable
+        const db1Response = await env.DB1.fetch(new Request("/db1/videos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            video_type: videoType,
+            scheduled_at: scheduleDateTime,
+            r2_url: publicUrl,
+            content_type: contentType,
+            video_filename: filename,
+            video_file_size: contentLength,
+            status: "Working"
+          })
+        }));
+
+        let db1Data = null;
+        if (db1Response.ok) {
+          db1Data = await db1Response.json();
+          await logToGrafana(env, "info", "DB1 New Video Entry", { title });
+        } else {
+          const text = await db1Response.text();
+          await logToGrafana(env, "error", "DB1 video upsert failed", { title, db1ResponseText: text });
+          throw new Error(`DB1 update failed: ${text}`);
+        }
 
         // RETAINED: Rev.ai logic unchanged
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
@@ -129,6 +153,34 @@ export default {
           revaiJobId: revaiJson.id
         });
 
+        // ADDED: DB1 follow-up update for Rev.ai job
+        const db1FollowupResponse = await env.DB1.fetch(new Request("/db1/videos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            status: "Pending Transcription",
+            transcript_id: revaiJson.id
+          })
+        }));
+
+        if (db1FollowupResponse.ok) {
+          const db1FollowupData = await db1FollowupResponse.json();
+          await logToGrafana(env, "info", "DB1 Transcript ID logged", {
+            title,
+            revaiJobId: revaiJson.id,
+            db1FollowupResponse: db1FollowupData
+          });
+        } else {
+          const text = await db1FollowupResponse.text();
+          await logToGrafana(env, "error", "DB1 transcript update failed", {
+            title,
+            revaiJobId: revaiJson.id,
+            db1FollowupResponseText: text
+          });
+          throw new Error(`DB1 transcript update failed: ${text}`);
+        }
+
         // RETAINED: Final response to Apple Shortcut
         const responseBody = {
           message: "Video upload complete",
@@ -140,7 +192,8 @@ export default {
           fileSizeMB: contentLength ? parseFloat((contentLength / 1048576).toFixed(2)) : null,
           contentType,
           transcriptId: revaiJson.id,
-          airtableData
+          airtableData,
+          db1data
         };
 
         return new Response(JSON.stringify(responseBody), {
