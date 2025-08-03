@@ -1,4 +1,4 @@
-// v1.3.1 gr8r-videouploads-worker added code to also update DB1 alongside Airtable
+// v1.3.2 gr8r-videouploads-worker adjust DB1 code to a Try so that the rest can continue even if it fails
 
 export default {
   async fetch(request, env, ctx) {
@@ -79,30 +79,53 @@ export default {
           title, 
           db1response: db1data
         });
-// ADDED: DB1 update to mirror Airtable
-        const db1Response = await env.DB1.fetch(new Request("/db1/videos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title,
-            video_type: videoType,
-            scheduled_at: scheduleDateTime,
-            r2_url: publicUrl,
-            content_type: contentType,
-            video_filename: filename,
-            video_file_size: contentLength,
-            status: "Working"
-          })
-        }));
 
+// ADDED: DB1 update to mirror Airtable
         let db1Data = null;
-        if (db1Response.ok) {
-          db1Data = await db1Response.json();
-          await logToGrafana(env, "info", "DB1 New Video Entry", { title });
-        } else {
-          const text = await db1Response.text();
-          await logToGrafana(env, "error", "DB1 video upsert failed", { title, db1ResponseText: text });
-          throw new Error(`DB1 update failed: ${text}`);
+        try {
+          const db1Response = await env.DB1.fetch(new Request("/db1/videos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title,
+              video_type: videoType,
+              scheduled_at: scheduleDateTime,
+              r2_url: publicUrl,
+              content_type: contentType,
+              video_filename: filename,
+              video_file_size: contentLength,
+              status: "Working"
+            })
+          }));
+
+          const text = await db1Response.text(); // read as text no matter what
+          try {
+            db1Data = JSON.parse(text);
+          } catch {
+            db1Data = { raw: text };
+          }
+
+          if (!db1Response.ok) {
+            await logToGrafana(env, "error", "DB1 video upsert failed", {
+              title,
+              db1Status: db1Response.status,
+              db1ResponseText: text
+            });
+            throw new Error(`DB1 update failed: ${text}`);
+          }
+
+          await logToGrafana(env, "info", "DB1 New Video Entry", {
+            title,
+            db1Response: db1Data
+          });
+
+        } catch (err) {
+          await logToGrafana(env, "error", "DB1 fetch exception", {
+            title,
+            error: err.message,
+            stack: err.stack
+          });
+          throw err; // rethrow so Shortcut still gets error
         }
 
         // RETAINED: Rev.ai logic unchanged
@@ -154,32 +177,52 @@ export default {
         });
 
         // ADDED: DB1 follow-up update for Rev.ai job
-        const db1FollowupResponse = await env.DB1.fetch(new Request("/db1/videos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title,
-            status: "Pending Transcription",
-            transcript_id: revaiJson.id
-          })
-        }));
+        try {
+          const db1FollowupResponse = await env.DB1.fetch(new Request("/db1/videos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title,
+              status: "Pending Transcription",
+              transcript_id: revaiJson.id
+            })
+          }));
 
-        if (db1FollowupResponse.ok) {
-          const db1FollowupData = await db1FollowupResponse.json();
+          const text = await db1FollowupResponse.text();
+          let db1FollowupData = null;
+
+          try {
+            db1FollowupData = JSON.parse(text);
+          } catch {
+            db1FollowupData = { raw: text };
+          }
+
+          if (!db1FollowupResponse.ok) {
+            await logToGrafana(env, "error", "DB1 transcript update failed", {
+              title,
+              revaiJobId: revaiJson.id,
+              db1Status: db1FollowupResponse.status,
+              db1ResponseText: text
+            });
+            throw new Error(`DB1 transcript update failed: ${text}`);
+          }
+
           await logToGrafana(env, "info", "DB1 Transcript ID logged", {
             title,
             revaiJobId: revaiJson.id,
-            db1FollowupResponse: db1FollowupData
+            db1Response: db1FollowupData
           });
-        } else {
-          const text = await db1FollowupResponse.text();
-          await logToGrafana(env, "error", "DB1 transcript update failed", {
+
+        } catch (err) {
+          await logToGrafana(env, "error", "DB1 transcript update exception", {
             title,
             revaiJobId: revaiJson.id,
-            db1FollowupResponseText: text
+            error: err.message,
+            stack: err.stack
           });
-          throw new Error(`DB1 transcript update failed: ${text}`);
+          throw err;
         }
+
 
         // RETAINED: Final response to Apple Shortcut
         const responseBody = {
