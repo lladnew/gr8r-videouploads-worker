@@ -75,13 +75,14 @@ export default {
           throw new Error(`Airtable create failed: ${text}`);
         }
 
+        let db1Data = null;
+        
         await logToGrafana(env, "info", "Airtable New Video Entry", { 
           title, 
           db1response: db1Data
         });
 
 // ADDED: DB1 update to mirror Airtable
-        let db1Data = null;
         try {
           const db1Response = await env.DB1.fetch(new Request("/db1/videos", {
             method: "POST",
