@@ -1,4 +1,4 @@
-// v1.3.3 gr8r-videouploads-worker revised DB1 fetch to include path -conflicting info added entrypoint = fetch to wrangler
+// v1.3.3 gr8r-videouploads-worker circles from ChatGPT now using gr8r-db1-worker in the fetch URL
 
 export default {
   async fetch(request, env, ctx) {
@@ -84,7 +84,7 @@ export default {
 
 // ADDED: DB1 update to mirror Airtable
         try {
-          const db1Response = await env.DB1.fetch("https://internal/db1/videos", {
+          const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -179,7 +179,7 @@ export default {
 
         // ADDED: DB1 follow-up update for Rev.ai job
         try {
-          const db1FollowupResponse = await env.DB1.fetch("https://internal/db1/videos", {
+          const db1FollowupResponse = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
