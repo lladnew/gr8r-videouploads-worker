@@ -17,3 +17,7 @@ service = "gr8r-revai-worker"
 [[services]]
 binding = "GRAFANA"
 service = "gr8r-grafana-worker"
+
+[[services]]
+binding = "DB1"
+service = "gr8r-db1-worker"
