@@ -84,7 +84,7 @@ export default {
 
 // ADDED: DB1 update to mirror Airtable
         try {
-          const db1Response = await env.DB1.fetch("/db1/videos", {
+          const db1Response = await env.DB1.fetch("https://internal/db1/videos", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -179,7 +179,7 @@ export default {
 
         // ADDED: DB1 follow-up update for Rev.ai job
         try {
-          const db1FollowupResponse = await env.DB1.fetch("/db1/videos", {
+          const db1FollowupResponse = await env.DB1.fetch("https://internal/db1/videos", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
