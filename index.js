@@ -97,7 +97,7 @@ export default {
               video_file_size: contentLength,
               status: "Working"
             })
-          }));
+          });
 
           const text = await db1Response.text(); // read as text no matter what
           try {
