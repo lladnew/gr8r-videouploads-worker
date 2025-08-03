@@ -77,7 +77,7 @@ export default {
 
         await logToGrafana(env, "info", "Airtable New Video Entry", { 
           title, 
-          db1response: db1data
+          db1response: db1Data
         });
 
 // ADDED: DB1 update to mirror Airtable
@@ -236,7 +236,7 @@ export default {
           contentType,
           transcriptId: revaiJson.id,
           airtableData,
-          db1data
+          db1Data
         };
 
         return new Response(JSON.stringify(responseBody), {
