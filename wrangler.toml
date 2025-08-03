@@ -9,15 +9,19 @@ bucket_name = "videos-gr8r"
 [[services]]
 binding = "AIRTABLE"
 service = "gr8r-airtable-worker"
+entrypoint = "fetch"
 
 [[services]]
 binding = "REVAI"
 service = "gr8r-revai-worker"
+entrypoint = "fetch"
 
 [[services]]
 binding = "GRAFANA"
 service = "gr8r-grafana-worker"
+entrypoint = "fetch"
 
 [[services]]
 binding = "DB1"
 service = "gr8r-db1-worker"
+entrypoint = "fetch"
