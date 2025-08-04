@@ -1,4 +1,4 @@
-// v1.3.4 gr8r-videouploads-worker adding Secret Key store for db1-worker access
+// v1.3.5 gr8r-videouploads-worker fixed Secret Store call to proper await env.DB1_INTERNAL_KEY.get()
 
 export default {
   async fetch(request, env, ctx) {
@@ -82,54 +82,47 @@ export default {
           db1response: db1Data
         });
 
-// ADDED: DB1 update to mirror Airtable
+        // ADDED: DB1 update to mirror Airtable
+        const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`, // 🔐 updated to use Secrets Store
+          },
+          body: JSON.stringify({
+            title,
+            video_type: videoType,
+            scheduled_at: scheduleDateTime,
+            r2_url: publicUrl,
+            content_type: contentType,
+            video_filename: filename,
+            file_size_bytes: contentLength,
+            status: "Working"
+          })
+        });
+
+        const text = await db1Response.text();
+        let db1Data;
         try {
-          const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
-            method: "POST",
-            headers: {  "Content-Type": "application/json",
-                        "Authorization": `Bearer ${env.DB1_INTERNAL_KEY}`, //added Key authorizatoin for internal traffic
-            },
-            body: JSON.stringify({
-              title,
-              video_type: videoType,
-              scheduled_at: scheduleDateTime,
-              r2_url: publicUrl,
-              content_type: contentType,
-              video_filename: filename,
-              file_size_bytes: contentLength,
-              status: "Working"
-            })
-          });
-
-          const text = await db1Response.text(); // read as text no matter what
-          try {
-            db1Data = JSON.parse(text);
-          } catch {
-            db1Data = { raw: text };
-          }
-
-          if (!db1Response.ok) {
-            await logToGrafana(env, "error", "DB1 video upsert failed", {
-              title,
-              db1Status: db1Response.status,
-              db1ResponseText: text
-            });
-            throw new Error(`DB1 update failed: ${text}`);
-          }
-
-          await logToGrafana(env, "info", "DB1 New Video Entry", {
-            title,
-            db1Response: db1Data
-          });
-
-        } catch (err) {
-          await logToGrafana(env, "error", "DB1 fetch exception", {
-            title,
-            error: err.message,
-            stack: err.stack
-          });
-          throw err; // rethrow so Shortcut still gets error
+          db1Data = JSON.parse(text);
+        } catch {
+          db1Data = { raw: text };
         }
+
+        if (!db1Response.ok) {
+          await logToGrafana(env, "error", "DB1 video upsert failed", {
+            title,
+            db1Status: db1Response.status,
+            db1ResponseText: text
+          });
+          throw new Error(`DB1 update failed: ${text}`);
+        }
+
+        await logToGrafana(env, "info", "DB1 New Video Entry", {
+          title,
+          db1Response: db1Data
+        });
+
 
         // RETAINED: Rev.ai logic unchanged
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
