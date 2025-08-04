@@ -102,7 +102,7 @@ export default {
         });
 
         const text = await db1Response.text();
-        let db1Data;
+        
         try {
           db1Data = JSON.parse(text);
         } catch {
