@@ -25,8 +25,3 @@ entrypoint = "fetch"
 binding = "DB1"
 service = "gr8r-db1-worker"
 entrypoint = "fetch"
-
-[[secrets_store_secrets]]
-binding = "DB1_INTERNAL_KEY"
-store_id = "23d622f0d3b8499fa021fad6149af8c9"
-secret_name = "DB1_INTERNAL_KEY"
