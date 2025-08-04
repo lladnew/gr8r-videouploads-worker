@@ -1,4 +1,10 @@
-// v1.3.5 gr8r-videouploads-worker fixed Secret Store call to proper await env.DB1_INTERNAL_KEY.get()
+// v1.3.6 gr8r-videouploads-worker adding santizeForDB1 function
+
+function sanitizeForDB1(obj) {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([_, value]) => value !== undefined)
+  );
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -82,31 +88,34 @@ export default {
         });
 
         // ADDED: DB1 update to mirror Airtable
+
+        const db1Body = sanitizeForDB1({
+          title,
+          video_type: videoType,
+          scheduled_at: scheduleDateTime,
+          r2_url: publicUrl,
+          content_type: contentType,
+          video_filename: filename,
+          file_size_bytes: contentLength,
+          status: "Working"
+        });
+
         const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`, // 🔐 updated to use Secrets Store
+            "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`,
           },
-          body: JSON.stringify({
-            title,
-            video_type: videoType,
-            scheduled_at: scheduleDateTime,
-            r2_url: publicUrl,
-            content_type: contentType,
-            video_filename: filename,
-            file_size_bytes: contentLength,
-            status: "Working"
-          })
+          body: JSON.stringify(db1Body),
         });
 
-        const text = await db1Response.text();
-        
-        try {
-          db1Data = JSON.parse(text);
-        } catch {
-          db1Data = { raw: text };
-        }
+                const text = await db1Response.text();
+                
+                try {
+                  db1Data = JSON.parse(text);
+                } catch {
+                  db1Data = { raw: text };
+                }
 
         if (!db1Response.ok) {
           await logToGrafana(env, "error", "DB1 video upsert failed", {
@@ -176,7 +185,7 @@ export default {
           const db1FollowupResponse = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
             headers: {  "Content-Type": "application/json", 
-                        "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`
+                        "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}` //added Key authorizatoin for internal traffic
             },
             body: JSON.stringify({
               title,
