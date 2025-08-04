@@ -176,7 +176,7 @@ export default {
           const db1FollowupResponse = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
             headers: {  "Content-Type": "application/json", 
-                        "Authorization": `Bearer ${env.DB1_INTERNAL_KEY}`, //added Key authorizatoin for internal traffic
+                        "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`
             },
             body: JSON.stringify({
               title,
