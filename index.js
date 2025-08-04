@@ -99,6 +99,8 @@ export default {
           file_size_bytes: contentLength,
           status: "Working"
         });
+        
+console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
 
         const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
           method: "POST",
