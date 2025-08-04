@@ -76,7 +76,6 @@ export default {
         }
 
         let db1Data = null;
-
         await logToGrafana(env, "info", "Airtable New Video Entry", { 
           title, 
           db1response: db1Data
