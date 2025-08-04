@@ -183,7 +183,9 @@ export default {
         try {
           const db1FollowupResponse = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {  "Content-Type": "application/json", 
+                        "x-internal-key": env.DB1_INTERNAL_KEY, // ADDED"
+            },
             body: JSON.stringify({
               title,
               status: "Pending Transcription",
