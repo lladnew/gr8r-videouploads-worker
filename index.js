@@ -1,4 +1,4 @@
-// v1.3.3 gr8r-videouploads-worker circles from ChatGPT now using gr8r-db1-worker in the fetch URL
+// v1.3.4 gr8r-videouploads-worker adding Secret Key store for db1-worker access
 
 export default {
   async fetch(request, env, ctx) {
@@ -86,7 +86,9 @@ export default {
         try {
           const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {  "Content-Type": "application/json",
+                        "x-internal-key": env.DB1_INTERNAL_KEY, // ADDED
+            },
             body: JSON.stringify({
               title,
               video_type: videoType,
