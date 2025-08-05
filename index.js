@@ -1,3 +1,5 @@
+// v1.3.8 gr8r-videouploads-worker added key caching function and updated both DB1 calls to utilize
+// ADDED: utilization of sanitize function for 2nd DB1 call
 // v1.3.7 gr8r-videouploads-worker revised santizeForDB1 function for null and empty values
 
 function sanitizeForDB1(obj) {
@@ -8,6 +10,14 @@ function sanitizeForDB1(obj) {
       value !== ""
     )
   );
+}
+let cachedDB1Key = null;
+
+async function getDB1InternalKey(env) {
+  if (!cachedDB1Key) {
+    cachedDB1Key = await env.DB1_INTERNAL_KEY.get();
+  }
+  return cachedDB1Key;
 }
 
 export default {
@@ -27,7 +37,7 @@ export default {
 
     if (pathname === '/upload-video') {
       try {
-        // CHANGED: Accept JSON body instead of multipart/form-data
+        // Accept JSON body instead of multipart/form-data
         const body = await request.json();
         const { filename, title, videoType, scheduleDateTime = "" } = body;
 
@@ -44,19 +54,19 @@ export default {
         const objectKey = filename; // CHANGED: Using filename directly
         const publicUrl = `https://videos.gr8r.com/${objectKey}`; // CHANGED: Constructing R2 URL
 
-        // ADDED: Check that the file exists in R2 without downloading it
+        // Check that the file exists in R2 without downloading it
         const object = await env.VIDEO_BUCKET.get(objectKey);
         if (!object) {
           await logToGrafana(env, "error", "R2 file missing", { title, objectKey });
           return new Response("Video file not found in R2", { status: 404 });
         }
 
-        // ADDED: Attempt to read metadata from R2 object
+        // Attempt to read metadata from R2 object
         let contentType = object.httpMetadata?.contentType || "unknown";
         let contentLength = object.size || null;
         // let humanSize = contentLength ? `${(contentLength / 1048576).toFixed(2)} MB` : null; //commenting out since field is depracated
 
-        // CHANGED: First Airtable update with new fields
+        // First Airtable update with new fields
         const airtableResponse = await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -91,7 +101,7 @@ export default {
           db1response: db1Data
         });
 
-        // ADDED: DB1 update to mirror Airtable
+        // DB1 update to mirror Airtable
 
         const db1Body = sanitizeForDB1({
           title,
@@ -105,12 +115,12 @@ export default {
         });
 
 console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
-
+        const db1Key = await getDB1InternalKey(env);
         const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}`,
+            "Authorization": `Bearer ${db1Key}`,
           },
           body: JSON.stringify(db1Body),
         });
@@ -138,7 +148,7 @@ console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
         });
 
 
-        // RETAINED: Rev.ai logic unchanged
+        // Rev.ai logic unchanged
         const revaiResponse = await env.REVAI.fetch(new Request("https://internal/api/revai/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -168,7 +178,7 @@ console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
 
         await logToGrafana(env, "info", "Rev.ai job triggered", { title, revaiJobId: revaiJson.id });
 
-        // RETAINED: Airtable update for Rev.ai Transcript ID
+        // Airtable update for Rev.ai Transcript ID
         await env.AIRTABLE.fetch(new Request("https://internal/api/airtable/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -186,54 +196,58 @@ console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
           revaiJobId: revaiJson.id
         });
 
-        // ADDED: DB1 follow-up update for Rev.ai job
+        // DB1 follow-up update for Rev.ai job
         try {
+         const db1FollowupBody = sanitizeForDB1({
+          title,
+          status: "Pending Transcription",
+          transcript_id: revaiJson.id
+          });
+
           const db1FollowupResponse = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
-            method: "POST",
-            headers: {  "Content-Type": "application/json", 
-                        "Authorization": `Bearer ${await env.DB1_INTERNAL_KEY.get()}` //added Key authorizatoin for internal traffic
-            },
-            body: JSON.stringify({
-              title,
-              status: "Pending Transcription",
-              transcript_id: revaiJson.id
-            })
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${db1Key}` // Reuse from earlier
+          },
+          body: JSON.stringify(db1FollowupBody)
           });
 
           const text = await db1FollowupResponse.text();
           let db1FollowupData = null;
 
-          try {
-            db1FollowupData = JSON.parse(text);
-          } catch {
-            db1FollowupData = { raw: text };
-          }
-
-          if (!db1FollowupResponse.ok) {
-            await logToGrafana(env, "error", "DB1 transcript update failed", {
-              title,
-              revaiJobId: revaiJson.id,
-              db1Status: db1FollowupResponse.status,
-              db1ResponseText: text
-            });
-            throw new Error(`DB1 transcript update failed: ${text}`);
-          }
-
-          await logToGrafana(env, "info", "DB1 Transcript ID logged", {
-            title,
-            revaiJobId: revaiJson.id,
-            db1Response: db1FollowupData
-          });
-
-        } catch (err) {
-          await logToGrafana(env, "error", "DB1 transcript update exception", {
-            title,
-            revaiJobId: revaiJson.id,
-            error: err.message,
-            stack: err.stack
-          });
-          throw err;
+        try {
+          db1FollowupData = JSON.parse(text);
+        } catch {
+          db1FollowupData = { raw: text };
         }
+
+        if (!db1FollowupResponse.ok) {
+          await logToGrafana(env, "error", "DB1 transcript update failed", {
+            title,
+            revaiJobId: revaiJson.id,
+            db1Status: db1FollowupResponse.status,
+            db1ResponseText: text
+          });
+          throw new Error(`DB1 transcript update failed: ${text}`);
+        }
+
+        await logToGrafana(env, "info", "DB1 Transcript ID logged", {
+          title,
+          revaiJobId: revaiJson.id,
+          db1Response: db1FollowupData
+        });
+        
+
+                } catch (err) {
+                  await logToGrafana(env, "error", "DB1 transcript update exception", {
+                    title,
+                    revaiJobId: revaiJson.id,
+                    error: err.message,
+                    stack: err.stack
+                  });
+                  throw err;
+                }
 
 
         // RETAINED: Final response to Apple Shortcut
