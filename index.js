@@ -1,8 +1,12 @@
-// v1.3.6 gr8r-videouploads-worker adding santizeForDB1 function
+// v1.3.7 gr8r-videouploads-worker revised santizeForDB1 function for null and empty values
 
 function sanitizeForDB1(obj) {
   return Object.fromEntries(
-    Object.entries(obj).filter(([_, value]) => value !== undefined)
+    Object.entries(obj).filter(([_, value]) =>
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    )
   );
 }
 
@@ -99,7 +103,7 @@ export default {
           file_size_bytes: contentLength,
           status: "Working"
         });
-        
+
 console.log("[DB1 Body] Payload:", JSON.stringify(db1Body, null, 2));
 
         const db1Response = await env.DB1.fetch("https://gr8r-db1-worker/db1/videos", {
